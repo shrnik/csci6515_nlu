@@ -1,1 +1,1 @@
-# csci6515_nlu
+# CSCI 6515 Natural Language Understanding
