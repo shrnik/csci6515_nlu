@@ -25,7 +25,7 @@ def get_data(str) :
 
 
 # make a bar plot of the scores
-paths = ["BIOSSES"]
+paths = ["BIOSSES","SICK-R", "STS12", "STS13", "STS14", "STS15", "STS16", "STS17", "STSBenchmark", "Banking77Classification"]
 
 scoresByTask= {}
 for path in paths:
