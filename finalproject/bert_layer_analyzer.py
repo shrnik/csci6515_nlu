@@ -27,15 +27,17 @@ class BertLayerAnalyzer:
         """Runs the model forward pass and caches/retrieves hidden states."""
         # use hashlib to create a hash of each item in texts
         cache_key = [hashlib.sha256(text.encode()).hexdigest() for text in texts]
-        uncached_texts = [text for text, key in zip(texts, cache_key) if key not in self._cache]
+        uncached_texts = [(key, text) for text, key in zip(texts, cache_key) if key not in self._cache]
         if uncached_texts:
             # Tokenize texts
 
             # create a batch of uncached texts
-            batch_size = 256
+            batch_size = 16
             for i in range(0, len(uncached_texts), batch_size):
                 batch = uncached_texts[i:i+batch_size]
-                encoded = self.tokenizer(batch, padding="max_length", truncation=True, return_tensors="pt")
+                batch_keys = [key for key, _ in batch]
+                batch_texts = [text for _, text in batch]
+                encoded = self.tokenizer(batch_texts, padding="max_length", truncation=True, return_tensors="pt")
                 encoded = {k: v.to(self.device) for k, v in encoded.items()}
 
                 # Get embeddings with output from all layers
@@ -47,12 +49,20 @@ class BertLayerAnalyzer:
                 attention_mask_cpu = encoded['attention_mask'].cpu()
 
                 # Store in cache
-                # Optional: Implement cache eviction (e.g., LRU) if memory becomes an issue
-                self._cache[cache_key] = (hidden_states_cpu, attention_mask_cpu)
+                for idx, key in enumerate(batch_keys):
+                    self._cache[key] = {
+                        "hidden_states": [layer[idx] for layer in hidden_states_cpu],  # one tensor per layer for this sample
+                        "attention_mask": attention_mask_cpu[idx]  # attention mask for this sample
+                    }
+                    
         # Return cached states (already on CPU)
-        for key in cache_key:
-            hidden_states_cpu, attention_mask_cpu = self._cache[key]
-            return hidden_states_cpu, attention_mask_cpu
+        # Stack the hidden states and attention masks into batched tensors
+        all_hidden_states = [torch.stack([self._cache[key]["hidden_states"][i] for key in cache_key]) 
+                           for i in range(len(self._cache[cache_key[0]]["hidden_states"]))]
+        all_attention_masks = torch.stack([self._cache[key]["attention_mask"] for key in cache_key])
+        
+        # Return tuple matching model output format
+        return all_hidden_states, all_attention_masks
 
     def get_layer_embeddings(self, texts: List[str], layer_idx: int) -> np.ndarray:
         """Get embeddings from a specific transformer layer using cached hidden states."""
@@ -71,7 +81,9 @@ class BertLayerAnalyzer:
 
         embeddings = torch.sum(layer_output * attention_mask_unsqueezed, dim=1) / sum_mask
 
-        return embeddings.numpy() # Already on CPU
+        embeddings_np = embeddings.numpy() # Already on CPU
+        print(f"Embeddings shape: {embeddings_np.shape}")  # Debug print
+        return embeddings_np
 
     def clear_cache(self):
         """Clears the hidden state cache."""
@@ -97,7 +109,11 @@ class BertLayerAnalyzer:
               prompt_type = None,
               **kwargs
             ):
-                return self.analyzer.get_layer_embeddings(sentences, self.layer_idx)
+                embeddings = self.analyzer.get_layer_embeddings(sentences, self.layer_idx)
+                # Ensure 2D array
+                if len(embeddings.shape) == 1:
+                    embeddings = embeddings.reshape(1, -1)
+                return embeddings
 
         evaluator = LayerEvaluator(self, layer_idx)
         benchmark = mteb.MTEB(tasks=tasks)
@@ -109,7 +125,7 @@ def main():
     analyzer = BertLayerAnalyzer()
 
     # Analyze each layer
-    tasks = mteb.get_tasks(tasks=["Banking77Classification"])
+    tasks = mteb.get_tasks(tasks=["BIOSSES"])
 
     for layer_idx in tqdm(range(analyzer.num_layers)):
         print(f"\nEvaluating layer {layer_idx}")
