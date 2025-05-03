@@ -63,7 +63,7 @@ class BertLayerAnalyzer:
             # Tokenize texts
             # create a batch of uncached texts
             batch_size = 128
-            cls = is_cls(task_name)
+            cls = False
             for i in tqdm(range(0, len(uncached_texts), batch_size), desc=f"Processing batches"):
                 batch = uncached_texts[i:i+batch_size]
                 batch_keys = [key for key, _ in batch]
